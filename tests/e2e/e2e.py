@@ -439,6 +439,30 @@ EXPECTED_ADDITIONS = (
 )
 
 
+# The Claude Code `lcu-approve` mod setup copied into HOME. `lcu update` refreshes it from the new release
+# (docs/INSTALLATION.md#upgrades-and-rollback), and a `--runtime-only` reinstall never runs setup, so after an
+# update and after the rollback it holds the release's own copy, not OLD's.
+CLAUDE_MOD = 'HOME/.claude/skills/lcu-approve/'
+CLAUDE_MOD_SETUP_FILES = ('lcu.json',)  # written by setup beside the shipped files, not shipped
+
+
+def expected_mod(files, release, normalize):
+    """`files` with the lcu-approve mod's shipped files replaced by those of the release at `release` (the
+    extracted archive), as lcu/claude_mod.mjs copies them: without its tests, keeping the installed file's mode
+    (new files are written 0600)."""
+    source = release / 'adapters/claude-mod/lcu-approve'
+    shipped = {}
+    for path in sorted(source.rglob('*')):
+        name = str(path.relative_to(source))
+        if path.is_file() and name.split('/')[0] != 'tests' and path.name != '.DS_Store':
+            shipped[CLAUDE_MOD + name] = normalize(parse_file(path))
+    expected = {key: value for key, value in files.items()
+                if not key.startswith(CLAUDE_MOD) or key[len(CLAUDE_MOD):] in CLAUDE_MOD_SETUP_FILES}
+    for key, data in shipped.items():
+        expected[key] = {'mode': files.get(key, {}).get('mode', oct(0o600)), **data}
+    return expected
+
+
 def diff(old, new, path='', out=None):
     out = [] if out is None else out
     if isinstance(old, dict) and isinstance(new, dict):
@@ -769,11 +793,14 @@ def check_upgrade(sandbox, old, new, mode):
             failures.extend(f'{stage}: registered path missing: {path}' for path in after['missing-paths'])
             renamed = version == new.version and old.archive != new.archive  # the self-test compares OLD with itself
             files = expected_renames(before['files']) if renamed else before['files']
+            files = expected_mod(files, sandbox.source(new), normalize)  # refreshed by the update, kept by rollback
             failures.extend(f'{stage}: agent files {line}' for line in diff(files, after['files']))
 
     before = observe()
     if agent and (not before['registrations'] or before['missing-paths'] or not before['launch']):
         failures.append(f'OLD baseline is not usable: {short(before["registrations"])} {before["missing-paths"]}')
+    if agent and not any(key.startswith(CLAUDE_MOD) for key in before['files']):
+        failures.append('OLD setup did not install the lcu-approve mod')
     old_release = (sandbox.prefix / 'current').resolve()
     driver = sandbox.root / 'update_driver.py'
     write(driver, UPDATE_DRIVER)
@@ -788,6 +815,28 @@ def check_upgrade(sandbox, old, new, mode):
     if code != 0:
         return failures + [f'rollback (reinstalling OLD) failed ({code}): {err[-800:]}']
     compare(before, observe(), 'after rollback', old.version)
+    if agent:
+        failures.extend(f'after rollback: {line}' for line in mod_interface(sandbox))
+    return failures
+
+
+def mod_interface(sandbox):
+    """What the lcu-approve mod left in HOME needs from the current release: the relay's host-only approval tools,
+    `lcu update --notice --json --announce=SESSION` (JSON on stdout) and `lcu apps --json` (not a usage error)."""
+    failures = []
+    relay = (sandbox.prefix / 'current/adapters/claude.mjs').read_text()
+    failures.extend(f'the Claude relay does not list {tool}' for tool in ('approval_request', 'approval_choice')
+                    if f"'{tool}'" not in relay)
+    code, out, err = sandbox.lcu('update', '--notice', '--json', '--announce=e2e-session')
+    try:
+        json.loads(out)
+    except json.JSONDecodeError:
+        code = code or 'non-JSON output'
+    if code:
+        failures.append(f'lcu update --notice --json --announce failed ({code}): {(out + err)[-400:]}')
+    code, out, err = sandbox.lcu('apps', '--json')
+    if code == 2 or 'usage' in (out + err).lower():
+        failures.append(f'lcu apps --json is not a command ({code}): {(out + err)[-400:]}')
     return failures
 
 
