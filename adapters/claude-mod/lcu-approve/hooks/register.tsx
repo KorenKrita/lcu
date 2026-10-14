@@ -14,7 +14,6 @@ const SERVER = 'lcu'
 const REQUEST_TOOL = 'approval_request'
 const CHOICE_TOOL = 'approval_choice'
 const ASK_HEADER = 'Computer use'
-const WARNING_TITLE = 'Elevated risk'
 const APPROVAL_TITLE = 'Computer use approval'
 const APPS_COMMAND = 'computer-use-apps'
 const APPS_PANE = 'lcu-approved-apps'
@@ -45,7 +44,8 @@ export const register: Register = on => {
     if (e.mcp_server_name !== SERVER) return next(e)
     // Nobody to ask in a headless run: the engine answers for itself. The desktop app can report no
     // surfaces while it still places panes, so an empty list alone does not mean headless.
-    if ((await $.session.surfaces()).length === 0 && !(await placesPanes($))) return next(e)
+    const surfaces = await $.session.surfaces()
+    if (surfaces.length === 0 && !(await placesPanes($))) return next(e)
 
     let approval: Approval
     try {
@@ -55,6 +55,14 @@ export const register: Register = on => {
       approval = JSON.parse(textOf(reply)) as Approval
     } catch {
       return next(e)
+    }
+
+    // The desktop app flags a session as needing input only for a permission request: the engine's
+    // question card is one, a pane is not. So the app gets the card, even with a terminal attached too.
+    // Asked from a timer, a dispatch of its own, so this hook does not wait on the person.
+    if (surfaces.includes('desktop')) {
+      $.clock.after(0, () => askAndRecord($, approval))
+      return { block: 'Answered by the lcu-approve mod' }
     }
 
     // The icon is made here, in an event hook: a render closure cannot run a process.
@@ -487,20 +495,32 @@ async function showPane($: any, approval: Approval, icon: string | undefined, gr
   return false
 }
 
-// The engine's question dialog, for where no pane is seated.
+// What a dismissed card (its close mark, or Skip) resolves the question with.
+const DISMISSED = '[User dismissed'
+
+// The question: the app, the risk when high. The desktop app draws only this text and the option labels.
+function askQuestion(approval: Approval): string {
+  const sentence = `Computer use will be able to see and control ${approval.label} (${approval.app}).`
+  if (approval.riskLevel !== 'high') return `${sentence} Allow it?`
+  const warning = approval.warning ? ` ${plainWarning(approval.warning)}` : ''
+  return `\u26a0\ufe0f High risk \u2014 ${sentence}${warning} Allow it?`
+}
+
+// The engine's question dialog: the desktop app's card, and a terminal where no pane is seated.
 async function askAndRecord($: any, approval: Approval): Promise<void> {
   const options = [LABEL_SESSION, ...(approval.scopes.includes('always') ? [LABEL_ALWAYS] : []), LABEL_DENY]
-  const risk = approval.riskLevel === 'high' && approval.warning ? `\n${WARNING_TITLE}: ${plainWarning(approval.warning)}` : ''
-  const question = `Computer use will be able to see and control ${approval.label} (${approval.app}).${risk}`
-  const started = Date.now()
+  const started = await now($)
   let choice: Choice = 'cancel'
   try {
-    const answer: string = await $.ui.ask(question, { options, header: ASK_HEADER })
-    choice = 'deny'
-    // A person cannot answer in under a few hundred milliseconds; anything faster was not a person.
-    if (Date.now() - started >= 400) {
-      if (answer === LABEL_SESSION) choice = 'session'
-      else if (answer === LABEL_ALWAYS && options.includes(LABEL_ALWAYS)) choice = 'always'
+    const answer: string = await $.ui.ask(askQuestion(approval), { options, header: ASK_HEADER })
+    // A dismissed card resolves with a note instead of rejecting: a cancel, as Esc on the pane.
+    if (!String(answer).startsWith(DISMISSED)) {
+      choice = 'deny'
+      // A person cannot answer in under a few hundred milliseconds; anything faster was not a person.
+      if ((await now($)) - started >= 400) {
+        if (answer === LABEL_SESSION) choice = 'session'
+        else if (answer === LABEL_ALWAYS && options.includes(LABEL_ALWAYS)) choice = 'always'
+      }
     }
   } catch {
     // Dismissed.

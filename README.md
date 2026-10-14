@@ -35,7 +35,7 @@ claude plugin install lcu@lcu
 
 ## Approve apps from Claude, natively
 
-The first time an agent controls an app (Zed, Notes, Safari), the computer-use runtime asks you to allow it. The Claude app's Code tab used to fail that request with "Computer Use was not approved". `lcu setup --agent claude-code` now installs a small Claude Code mod, `lcu-approve`, that shows the question as a native **Computer use approval** pane in the Claude app, and in the terminal.
+The first time an agent controls an app (Zed, Notes, Safari), the computer-use runtime asks you to allow it. The Claude app's Code tab used to fail that request with "Computer Use was not approved". `lcu setup --agent claude-code` now installs a small Claude Code mod, `lcu-approve`, that asks the question natively: as a question card in the Claude app, which flags the session as needing input, and as a **Computer use approval** pane in the terminal.
 
 <p align="center"><img src="docs/assets/approval-demo.gif" width="720" alt="The Computer use approval pane in Claude Code: Allow this conversation, a high-risk app with its warning, and the Approved apps panel"></p>
 
