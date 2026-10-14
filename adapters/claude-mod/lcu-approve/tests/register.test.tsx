@@ -200,6 +200,23 @@ test('the approval shows the app icon made with sips, on a terminal and on the a
   expect(ran.slice(before).filter(argv => argv[0] === '/usr/bin/sips')).toEqual([])
 })
 
+test('an app without an .icns gets its icon from the system as PNG', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = lcu(on)
+  const { ran, store } = host(on, {
+    files: { '/tmp/icons/icon.png': ZED_ICON },
+    processes: (argv: string[]) => argv[0] === '/usr/bin/plutil' ? { exitCode: 1 } : iconProcesses(argv),
+  })
+  const { ui } = await openPane($, clock, calls)
+  const drawn = ran.find(argv => argv[0] === '/usr/bin/osascript')
+  expect(drawn?.at(-1)).toContain('representationUsingTypeProperties(4,')
+  const small = ran.find(argv => argv[0] === '/usr/bin/sips') ?? []
+  expect(small.slice(0, 5)).toEqual(['/usr/bin/sips', '-s', 'format', 'png', '-Z'])
+  expect(small.slice(-3)).toEqual(['/tmp/icons/full.png', '--out', '/tmp/icons/icon.png'])
+  expect(store.get('icon:dev.zed.Zed')).toEqual({ png: ZED_ICON })
+  expect(await ui.find({ type: 'Image' })).toBeDefined()
+})
+
 test('an approval without an icon still opens; the primary, secondary and dismiss buttons keep their order', async ($, on) => {
   const clock = mock.clock(on)
   const calls = lcu(on)

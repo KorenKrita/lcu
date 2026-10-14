@@ -338,12 +338,13 @@ async function convertIcon($: any, bundleId: string): Promise<string | undefined
     }
     if (!source) {
       // Asset-catalog icons have no .icns: ask the system for the icon.
+      // JXA does not bridge NSBitmapImageFileTypePNG, so pass its value (4); the name gives TIFF.
       const script = 'ObjC.import("AppKit");var i=$.NSWorkspace.sharedWorkspace.iconForFile(' + JSON.stringify(app) +
         ');var r=$.NSBitmapImageRep.imageRepWithData(i.TIFFRepresentation);' +
-        'r.representationUsingTypeProperties($.NSBitmapImageRepFileTypePNG,$({})).writeToFileAtomically(' + JSON.stringify(`${dir}/full.png`) + ',true)'
+        'r.representationUsingTypeProperties(4,$({})).writeToFileAtomically(' + JSON.stringify(`${dir}/full.png`) + ',true)'
       const drawn = await $.process.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', script], { timeoutMs: 3000 })
       if (!ok(drawn)) return undefined
-      const small = await $.process.run(['/usr/bin/sips', '-Z', ICON_PIXELS, `${dir}/full.png`, '--out', out], { timeoutMs: 3000 })
+      const small = await $.process.run(['/usr/bin/sips', '-s', 'format', 'png', '-Z', ICON_PIXELS, `${dir}/full.png`, '--out', out], { timeoutMs: 3000 })
       if (!ok(small)) return undefined
     }
     const { base64 } = await $.fs.read(out, { as: 'bytes' })
