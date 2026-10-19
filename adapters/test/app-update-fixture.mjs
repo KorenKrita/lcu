@@ -30,6 +30,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
 server.setRequestHandler(CallToolRequestSchema, async request => {
   const { name, arguments: args = {}, _meta } = request.params;
   log({ type: 'call', name, args, turn: _meta?.['x-codex-turn-metadata']?.turn_id });
+  // Still running when a restart closes this server.
+  if (name === 'js' && args.code === 'hold') await new Promise(resolve => setTimeout(resolve, 10_000));
   if (name === 'js' && args.code === 'slow-pipe-failure') await new Promise(resolve => setTimeout(resolve, 300));
   if (name === 'js' && (args.code === 'pipe-failure' || args.code === 'slow-pipe-failure')) {
     return { isError: true, content: [{ type: 'text', text: `Error: ${FAILURE}` }] };

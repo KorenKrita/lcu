@@ -90,6 +90,10 @@ test('createAppUpdateRestart restarts only for a readable, changed build of the 
   // A late failure of the replaced generation shares that restart.
   assert.equal(text(await restarts.afterJs(first, failure, restart)), APP_UPDATED_RESTART_TEXT);
   assert.equal(restarted, 1);
+  // A call the restart's close failed shares that restart; a fresh generation's transport error passes through.
+  const closed = { error: new Error('MCP error -32000: Connection closed') };
+  assert.equal(text(await restarts.afterJs(first, closed, restart)), APP_UPDATED_RESTART_TEXT);
+  assert.equal(await restarts.afterJs(restarts.current, closed, restart), undefined, 'no restart under way');
   assert.equal(await restarts.afterJs(restarts.current, failure, restart), undefined, 'fresh generation, same build');
   // A generation started without a readable build never restarts.
   build = undefined;
@@ -382,6 +386,57 @@ test('Claude relay: unchanged build passes through, and concurrent failures shar
     assert.equal(space.starts().length, 2);
   } finally {
     await relay.client.close();
+    space.remove();
+  }
+});
+
+test('Claude relay: a call still running on the server a restart closes shares that restart', async () => {
+  const space = workspace();
+  const relay = await startRelay(space, claudeRelay, 'runClaudeBridge');
+  try {
+    space.setBuild('build-2');
+    const held = claudeCall(relay.client, 'hold', { sessionId: 'session-held', turnId: 'prompt-held' });
+    while (space.calls('hold').length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(text(await claudeCall(relay.client, 'pipe-failure')), APP_UPDATED_RESTART_TEXT);
+    assert.equal(text(await held), APP_UPDATED_RESTART_TEXT);
+    assert.equal(space.starts().length, 2);
+  } finally {
+    await relay.client.close();
+    space.remove();
+  }
+});
+
+test('Codex relay: a call still running on the server a restart closes shares that restart', async () => {
+  const space = workspace();
+  const relay = await startRelay(space, codexRelay, 'runCodexBridge');
+  const meta = turn => ({ 'x-codex-turn-metadata': { session_id: 'codex-session', turn_id: turn } });
+  try {
+    space.setBuild('build-2');
+    const held = relay.client.callTool({ name: 'js', arguments: { code: 'hold' }, _meta: meta('held') });
+    while (space.calls('hold').length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(text(await relay.client.callTool({ name: 'js', arguments: { code: 'pipe-failure' },
+      _meta: meta('failing') })), APP_UPDATED_RESTART_TEXT);
+    assert.equal(text(await held), APP_UPDATED_RESTART_TEXT);
+    assert.equal(space.starts().length, 2);
+  } finally {
+    await relay.client.close();
+    space.remove();
+  }
+});
+
+test('shared client: a call still running on the server a restart closes shares that restart', async () => {
+  const space = workspace();
+  const bridge = sharedClient(space);
+  try {
+    await bridge.connect();
+    space.setBuild('build-2');
+    const held = bridge.call('js', { code: 'hold' }, { sessionId: 'session-held', turnId: 'turn-held' });
+    while (space.calls('hold').length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(text(await bridge.call('js', { code: 'pipe-failure' }, turn)), APP_UPDATED_RESTART_TEXT);
+    assert.equal(text(await held), APP_UPDATED_RESTART_TEXT);
+    assert.equal(space.starts().length, 2);
+  } finally {
+    await bridge.close();
     space.remove();
   }
 });

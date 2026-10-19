@@ -640,7 +640,8 @@ export function selectedAppBuild(argv, { cwd, env = process.env, platform = proc
  * unless that outcome is the native pipe failure, the generation is the current one and the app build now
  * readable on disk differs from the one it recorded: then `restart()` replaces the upstream (at most once per
  * generation, so a fresh child that fails the same way gets its own error) and every call of that
- * generation that failed this way gets the same tool error. The call is never retried: the fresh kernel has
+ * generation that failed this way, or that the restart's close of that generation failed, gets the same tool
+ * error. The call is never retried: the fresh kernel has
  * none of the old bindings, and JavaScript side effects could repeat.
  */
 export function createAppUpdateRestart({ build, log, now = Date.now }) {
@@ -660,7 +661,10 @@ export function createAppUpdateRestart({ build, log, now = Date.now }) {
     },
     get current() { return current; },
     async afterJs(generation, outcome, restart) {
-      if (!generation || generation.build === undefined || !nativePipeFailed(outcome)) return undefined;
+      if (!generation || generation.build === undefined) return undefined;
+      // A call still running on a server the restart closes fails with its transport error: it shares the restart.
+      if (generation.restart && outcome && 'error' in outcome) return structuredClone(await generation.restart);
+      if (!nativePipeFailed(outcome)) return undefined;
       if (!generation.restart) {
         const build = generation === current ? read() : undefined;
         if (build === undefined || build === generation.build) return undefined;
