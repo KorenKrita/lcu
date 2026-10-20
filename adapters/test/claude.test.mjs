@@ -908,6 +908,7 @@ test('Claude relay logs each call and approval as metadata only', async () => {
       const request = await approvalCall(bridge.client, 'approval_request', { message: NATIVE_MESSAGE });
       const described = JSON.parse(request.content[0].text);
       await approvalCall(bridge.client, 'approval_choice', { id: described.id, choice: 'always' });
+      await approvalCall(bridge.client, 'approval_choice', { id: described.id, choice: 'always' });
       return { action: 'decline' };
     });
     await callWithContext(bridge.client, 'js', { code: 'approval-native' }, { toolUseId: 'diag-approval' });
@@ -939,6 +940,9 @@ test('Claude relay logs each call and approval as metadata only', async () => {
       [1, 3, 'native_app', 'dev.lcu.NativeFixture.generated', ['session', 'always']]);
     assert.ok(events.some(entry => entry.event === 'approval_claimed' && entry.approval === 1));
     assert.ok(events.some(entry => entry.event === 'approval_choice' && entry.approval === 1 && entry.choice === 'always'));
+    // A refused mod call is logged too: the second choice for the same approval.
+    assert.ok(events.some(entry => entry.event === 'approval_refused' && entry.tool === 'approval_choice' &&
+      entry.reason === 'This approval already has a choice'));
     const end = events.find(entry => entry.event === 'approval_end');
     assert.deepEqual([end.approval, end.action, end.persist], [1, 'accept', 'always']);
     assert.equal(typeof end.ms, 'number');

@@ -505,7 +505,10 @@ export async function runClaudeBridge({
         const modCall = _meta?.[CLAUDE_TOOL_USE_META];
         const outcome = name === APPROVAL_REQUEST_TOOL ? broker.describe(toolArgs.message, modCall)
           : broker.choose(toolArgs.id, toolArgs.choice, modCall);
-        if (!outcome.ok) return { isError: true, content: [{ type: 'text', text: outcome.error }] };
+        if (!outcome.ok) {
+          log.event('approval_refused', { tool: name, reason: outcome.error });
+          return { isError: true, content: [{ type: 'text', text: outcome.error }] };
+        }
         if (name === APPROVAL_REQUEST_TOOL) loggedApprovals.get(outcome.approval.id)?.claimed();
         else loggedApprovals.get(toolArgs.id)?.choice(toolArgs.choice);
         const body = outcome.approval ?? { ok: true };
@@ -554,8 +557,10 @@ export async function runClaudeBridge({
       const current = link;
       if (!current) return restartFailedResult(restartFailure ?? new Error('the original CUA server is not running'));
       liveCalls++;
+      let callNumber;
       try {
-        return await calls.track(name, { timeout_ms: toolArgs.timeout_ms, signal: extra.signal }, async () => {
+        return await calls.track(name, { timeout_ms: toolArgs.timeout_ms, signal: extra.signal }, async call => {
+          callNumber = call;
           const outcome = await callOutcome(() => callWithDeadline(approvals, callTimeout(name, toolArgs), extra.signal,
             signal => current.client.callTool({ name, arguments: toolArgs, _meta: metadata }, undefined, {
               signal,
@@ -569,11 +574,13 @@ export async function runClaudeBridge({
         });
       } finally {
         liveCalls--;
+        // The runtime's own cancel of an open elicitation is not always delivered (a js_reset or a host
+        // timeout ends the call and leaves it open): an approval the call opened, or any with no call
+        // left alive, has nobody left to answer, and its wait would hold every later call's deadline.
+        if (callNumber !== undefined) broker.release(callNumber);
+        if (liveCalls === 0) broker.cancelWaiting();
         // Never let cleanup mask the original tool result or abort error.
         if (extra.signal.aborted) {
-          // The runtime's own cancel of an open elicitation is not always delivered: with no other
-          // call alive, nobody is left to answer an approval the mod is still holding open.
-          if (liveCalls === 0) broker.cancelWaiting();
           try {
             await turnEnded(context.life, 'Interrupt');
           } catch (error) {
@@ -595,7 +602,7 @@ export async function runClaudeBridge({
 
     async function answerElicitation(params, extra, entry) {
       const approval = nativeAppApprovalOptions(params);
-      const pendingId = approval ? broker.open(params) : undefined;
+      const pendingId = approval ? broker.open(params, { call: calls.current }) : undefined;
       if (pendingId) loggedApprovals.set(pendingId, entry);
       try {
         const response = await relayElicitation(

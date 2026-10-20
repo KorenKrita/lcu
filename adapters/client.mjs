@@ -215,8 +215,8 @@ export function createApprovalBroker({ now = Date.now, ttlMs = APPROVAL_CHOICE_T
 
   return {
     get size() { return records.size; },
-    /** Register an open native-app approval; returns its id. */
-    open(params) {
+    /** Register an open native-app approval, made during tool call `call` when known; returns its id. */
+    open(params, { call } = {}) {
       const approval = nativeAppApprovalOptions(params);
       if (!approval) return undefined;
       const meta = params._meta;
@@ -236,6 +236,8 @@ export function createApprovalBroker({ now = Date.now, ttlMs = APPROVAL_CHOICE_T
         createdAt: now(),
         claimedAt: undefined,
         choice: undefined,
+        call,
+        released: false,
         waiters: [],
       });
       return id;
@@ -281,7 +283,7 @@ export function createApprovalBroker({ now = Date.now, ttlMs = APPROVAL_CHOICE_T
     async awaitChoice(id, signal) {
       const record = records.get(id);
       if (!record || record.claimedAt === undefined) return undefined;
-      if (record.choice === undefined) {
+      if (record.choice === undefined && !record.released) {
         await new Promise(resolve => {
           record.waiters.push(resolve);
           if (signal?.aborted) resolve();
@@ -293,6 +295,17 @@ export function createApprovalBroker({ now = Date.now, ttlMs = APPROVAL_CHOICE_T
     /** Release every wait without a choice: the request they belong to ended. */
     cancelWaiting() {
       for (const record of records.values()) for (const waiter of record.waiters.splice(0)) waiter();
+    },
+    /**
+     * Release the waits of the approvals tool call `call` opened: the call ended, so nobody is left to use
+     * their answer, and the runtime's cancel of its elicitation is not always delivered.
+     */
+    release(call) {
+      for (const record of records.values()) {
+        if (record.call !== call) continue;
+        record.released = true;
+        for (const waiter of record.waiters.splice(0)) waiter();
+      }
     },
     /** Remove the record and return its still-valid recorded choice, if any. */
     settle(id) {
@@ -321,7 +334,7 @@ export function createCallTracker(log, now = Date.now) {
       let outcome = 'error';
       let code;
       try {
-        const result = await run();
+        const result = await run(call);
         outcome = result?.isError ? 'tool_error' : 'ok';
         return result;
       } catch (error) {

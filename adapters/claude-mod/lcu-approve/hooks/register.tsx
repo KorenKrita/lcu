@@ -59,9 +59,11 @@ export const register: Register = on => {
 
     // The desktop app flags a session as needing input only for a permission request: the engine's
     // question card is one, a pane is not. So the app gets the card, even with a terminal attached too.
-    // Asked from a timer, a dispatch of its own, so this hook does not wait on the person.
+    // Asked and recorded within this hook: approval_choice sent from a timer would be the mod's own code
+    // outside its hooks, which its tool.check never sees, so the session's permission rules would decide it
+    // (auto mode's classifier refuses it). Waiting on `$` does not spend the hook's budget.
     if (surfaces.includes('desktop')) {
-      $.clock.after(0, () => askAndRecord($, approval))
+      await askAndRecord($, approval)
       return { block: 'Answered by the lcu-approve mod' }
     }
 
@@ -73,8 +75,8 @@ export const register: Register = on => {
     // delivering the pane's presses. The pane's button (or Esc) records the choice with LCU, whose
     // relay keeps the runtime's elicitation open until then; this hook only blocks the engine's form.
     if (!(await showPane($, approval, icon, graphics))) {
-      // A narrow terminal seats no pane: ask from a timer, which is a dispatch of its own.
-      $.clock.after(0, () => askAndRecord($, approval))
+      // A narrow terminal seats no pane: the question dialog asks, within this hook as on the desktop.
+      await askAndRecord($, approval)
     }
     return { block: 'Answered by the lcu-approve mod' }
   })

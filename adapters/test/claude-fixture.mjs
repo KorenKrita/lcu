@@ -102,7 +102,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   }
   if (name === 'js' && typeof args.code === 'string' && args.code.startsWith('approval-')) {
     const params = approvalRequest(args.code);
-    const response = await server.elicitInput(params, { signal: extra.signal });
+    // The original runtime waits for the answer without a deadline; the SDK default would end it after 60 s.
+    const response = await server.elicitInput(params, { signal: extra.signal, timeout: 2 ** 31 - 1 });
     log({ type: 'elicitation-response', code: args.code, response });
     return { content: [{ type: 'text', text: JSON.stringify(response) }] };
   }

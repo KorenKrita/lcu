@@ -99,16 +99,15 @@ test('the pane leaves out Always allow when the runtime did not offer it', async
   expect(calls.filter(call => call.tool === 'choice').map(call => call.args.choice)).toEqual(['deny'])
 })
 
-test('a pane on a narrow terminal is replaced by the question dialog, asked after the hook returned', async ($, on) => {
+test('a pane on a narrow terminal is replaced by the question dialog', async ($, on) => {
   const clock = mock.clock(on)
   const calls = lcu(on, { placed: false })
   const questions = asker(on, clock)
-  const result: any = await $.classic.Elicitation(ELICITATION as any)
-  expect(result.block).toBeDefined()
-  expect(calls.map(call => call.tool)).toEqual(['request'])
+  const pending = $.classic.Elicitation(ELICITATION as any)
   await until(clock, () => calls.some(call => call.tool === 'choice'))
+  expect(((await pending) as any).block).toBeDefined()
   expect(questions.length).toBe(1)
-  expect(calls.filter(call => call.tool === 'choice').length).toBe(1)
+  expect(calls.map(call => call.tool)).toEqual(['request', 'choice'])
 })
 
 test('an elicitation LCU does not recognize is left to the engine', async ($, on) => {
@@ -611,4 +610,30 @@ test('a failing check on a prompt gives nothing and does not throw', async ($, o
   const result: any = await prompt($)
   expect(result.additionalContext).toBeUndefined()
   expect(toasts).toEqual([])
+})
+
+// A call the mod's own code makes outside its hooks (from a timer) is not seen by the mod's own tool.check,
+// so the session's permission rules decide it: auto mode's classifier refused approval_choice and the choice
+// never reached LCU. So the question is asked, and the choice recorded, within the Elicitation hook.
+async function recordedWithinHook($: any, on: any, options: any) {
+  const clock = mock.clock(on)
+  const calls = lcu(on, options)
+  asker(on, clock, 'Allow this conversation')
+  let recordedFirst: boolean | undefined
+  const pending = $.classic.Elicitation(ELICITATION as any).then((result: any) => {
+    recordedFirst = calls.some(call => call.tool === 'choice')
+    return result
+  })
+  await until(clock, () => calls.some(call => call.tool === 'choice') && recordedFirst !== undefined)
+  expect((await pending).block).toBeDefined()
+  expect(recordedFirst).toBe(true)
+  expect(calls.filter(call => call.tool === 'choice').map(call => call.args.choice)).toEqual(['session'])
+}
+
+test('the desktop question card records the choice before the Elicitation hook returns', async ($, on) => {
+  await recordedWithinHook($, on, DESKTOP)
+})
+
+test('the narrow-terminal question dialog records the choice before the Elicitation hook returns', async ($, on) => {
+  await recordedWithinHook($, on, { placed: false })
 })
