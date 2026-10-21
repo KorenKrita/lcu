@@ -45,7 +45,10 @@ export const register: Register = on => {
     // Nobody to ask in a headless run: the engine answers for itself. The desktop app can report no
     // surfaces while it still places panes, so an empty list alone does not mean headless.
     const surfaces = await $.session.surfaces()
-    if (surfaces.length === 0 && !(await placesPanes($))) return next(e)
+    // The Claude app starts Claude Code with this entrypoint; with 2.1.304 its session can have no surface
+    // attached yet when the approval arrives, and its own answer to the engine's form is a decline.
+    const inApp = (await $.env.get('CLAUDE_CODE_ENTRYPOINT').catch(() => undefined)) === 'claude-desktop'
+    if (surfaces.length === 0 && !inApp && !(await placesPanes($))) return next(e)
 
     let approval: Approval
     try {
@@ -62,7 +65,7 @@ export const register: Register = on => {
     // Asked and recorded within this hook: approval_choice sent from a timer would be the mod's own code
     // outside its hooks, which its tool.check never sees, so the session's permission rules would decide it
     // (auto mode's classifier refuses it). Waiting on `$` does not spend the hook's budget.
-    if (surfaces.includes('desktop')) {
+    if (surfaces.includes('desktop') || (inApp && !surfaces.includes('terminal'))) {
       await askAndRecord($, approval)
       return { block: 'Answered by the lcu-approve mod' }
     }

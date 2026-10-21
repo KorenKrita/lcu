@@ -42,10 +42,10 @@ DIALOG = r'Allow.?this.?conversation'
 
 def scenario(pattern=DIALOG, *, mod=True, columns=160, code='approval-native', keys=(), answer=None,
              surface='pane', delay=3, tool='mcp__lcu__js', model_call=None, screen=None, headless=False,
-             desktop=False):
+             desktop=False, attach=True):
     return dict(pattern=pattern, mod=mod, columns=columns, code=code, keys=list(keys), answer=answer,
                 surface=surface, delay=delay, tool=tool, model_call=model_call, screen=screen, headless=headless,
-                desktop=desktop)
+                desktop=desktop, attach=attach)
 
 
 SCENARIOS = {
@@ -72,6 +72,8 @@ SCENARIOS = {
     # sent from a timer bypassed the mod's tool.check, and auto mode refused it (2026-10-20).
     'desktop-session': scenario(answer=SESSION, surface='ask', desktop=True),
     'desktop-slow': scenario(answer=SESSION, surface='ask', desktop=True, delay=75),
+    # The app with Claude Code 2.1.304: no surface attached when the approval arrives (2026-10-21).
+    'desktop-unattached': scenario(answer=SESSION, surface='ask', desktop=True, attach=False),
 }
 
 
@@ -103,7 +105,7 @@ def prepare(base, claude, name, use_mod, allow_lcu=True):
     return home, project, log, mcp
 
 
-def drive_desktop(claude, project, env, mcp, debug_file, delay):
+def drive_desktop(claude, project, env, mcp, debug_file, delay, attach=True):
     """Run Claude Code as the Claude app does and answer its permission requests; return those it denied."""
     command = [claude, '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json',
                '--permission-prompt-tool=stdio', '--permission-mode', 'default', '--mcp-config', str(mcp),
@@ -137,8 +139,9 @@ def drive_desktop(claude, project, env, mcp, debug_file, delay):
               'response': {'behavior': 'allow', 'updatedInput': updated}}})
 
     send({'type': 'control_request', 'request_id': 'init', 'request': {'subtype': 'initialize'}})
-    send({'type': 'control_request', 'request_id': 'attach',
-          'request': {'subtype': 'ui_attach', 'surface': 'desktop', 'client_id': 'lcu-test'}})
+    if attach:
+        send({'type': 'control_request', 'request_id': 'attach',
+              'request': {'subtype': 'ui_attach', 'surface': 'desktop', 'client_id': 'lcu-test'}})
     send({'type': 'user', 'message': {'role': 'user', 'content': PROMPT}, 'parent_tool_use_id': None,
           'session_id': ''})
     # A choice that never reaches LCU leaves the call waiting for good: stop the session after a while.
@@ -152,6 +155,10 @@ def drive_desktop(claude, project, env, mcp, debug_file, delay):
                 continue
             if message.get('type') == 'control_request' and message['request'].get('subtype') == 'can_use_tool':
                 threading.Thread(target=answer, args=(message['request_id'], message['request']), daemon=True).start()
+            elif message.get('type') == 'control_request' and message['request'].get('subtype') == 'elicitation':
+                # The app declines the engine's own form.
+                send({'type': 'control_response', 'response': {'subtype': 'success',
+                      'request_id': message['request_id'], 'response': {'action': 'decline'}}})
             elif message.get('type') == 'control_request':
                 send({'type': 'control_response', 'response': {'subtype': 'success',
                       'request_id': message['request_id'], 'response': {}}})
@@ -187,11 +194,13 @@ def run(claude, name, keep):
         env.update({'HOME': str(home), 'ANTHROPIC_API_KEY': KEY, 'DISABLE_AUTOUPDATER': '1',
                     'ANTHROPIC_BASE_URL': f'http://127.0.0.1:{port_file.read_text()}',
                     'LCU_E2E_DELAY': str(spec['delay']), 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
-                    'CLAUDE_CODE_ENABLE_FUNCTION_HOOKS': '1'})
+                    'CLAUDE_CODE_ENABLE_FUNCTION_HOOKS': '1',
+                    # The scripted API answers with a call to the tool it is offered: no deferred tools.
+                    'ENABLE_TOOL_SEARCH': 'false'})
         debug_file = base / 'debug.log'
         denied = []
         if spec['desktop']:
-            denied = drive_desktop(claude, project, env, mcp, debug_file, spec['delay'])
+            denied = drive_desktop(claude, project, env, mcp, debug_file, spec['delay'], spec['attach'])
             result = subprocess.CompletedProcess([], 0, f'denied permission requests: {denied}', '')
         elif spec['headless']:
             command = [claude, '-p', PROMPT, '--mcp-config', str(mcp), '--strict-mcp-config',

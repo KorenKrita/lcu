@@ -637,3 +637,18 @@ test('the desktop question card records the choice before the Elicitation hook r
 test('the narrow-terminal question dialog records the choice before the Elicitation hook returns', async ($, on) => {
   await recordedWithinHook($, on, { placed: false })
 })
+
+// Claude Code 2.1.304 in the Claude app: no surface attached yet when the approval arrives. The entrypoint
+// says it is the app, whose own answer to the engine's form is a decline, so the question card asks.
+test('in the Claude app with no surface attached the question card still asks', async ($, on) => {
+  const clock = mock.clock(on)
+  const opened: string[] = []
+  const calls = lcu(on, { ...DESKTOP, surfaces: [], placed: false, opened })
+  on('env.get', (_$: any, e: any) => ({ value: e.name === 'CLAUDE_CODE_ENTRYPOINT' ? 'claude-desktop' : undefined }))
+  const questions = asker(on, clock, 'Allow this conversation')
+  const pending = $.classic.Elicitation(ELICITATION as any)
+  await until(clock, () => calls.some(call => call.tool === 'choice'))
+  expect(((await pending) as any).block).toBeDefined()
+  expect(questions.length).toBe(1)
+  expect(calls.filter(call => call.tool === 'choice').map(call => call.args.choice)).toEqual(['session'])
+})
