@@ -469,7 +469,8 @@ test('Pi registration writes the local extension and the per-scope command, offl
   assert.deepEqual(await setup.configure(['pi'], r.home, ['/usr/bin/lcu', '--audio'], r.tools, r.release, { environ: { HOME: r.home } }), []);
   assert.equal(calls.length, 2);
   const wrapper = readFileSync(join(r.home, '.local/share/lcu/pi/extension.mjs'), 'utf8');
-  assert.ok(wrapper.includes(pathToFileURL(join(r.release, 'adapters/pi/index.ts')).href));
+  const specifier = JSON.parse(wrapper.split('import lcu from ')[1].split(';')[0]);
+  assert.equal(specifier, join(r.release, 'adapters/pi/index.ts'));
   assert.ok(wrapper.includes('realpathSync(process.cwd())'));
   assert.deepEqual(JSON.parse(readFileSync(commands, 'utf8')), { projects: { '/existing/project': ['/usr/bin/lcu'] }, preserved: true, user: ['/usr/bin/lcu', '--audio'] });
 });

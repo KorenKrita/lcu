@@ -642,7 +642,11 @@ function registerPi(home, command, releaseRoot, { scope, project, env, cwd, setu
   const root = windows() ? join(home, 'AppData/Local/LCU/pi') : join(home, '.local/share/lcu/pi');
   const extension = join(root, 'extension.mjs');
   const selectedCommand = join(root, 'commands.json');
-  const wrapper = `import lcu from ${JSON.stringify(pathToFileURL(adapter).href)};\n` +
+  // Pi's own loader follows a file:// URL, but `pi-bolt compile` does not: it reports `"file:///…" does not resolve`
+  // and leaves LCU interpreted, at 60-85 ms per start, where a plain path compiles in (Pi-Bolt 1.0.5, macOS and
+  // Linux). Windows keeps the URL form: its path is no import specifier without one.
+  const specifier = windows() ? pathToFileURL(adapter).href : adapter;
+  const wrapper = `import lcu from ${JSON.stringify(specifier)};\n` +
     'import {readFileSync, realpathSync} from "node:fs";\n' +
     `const config = JSON.parse(readFileSync(${JSON.stringify(selectedCommand)}, "utf8"));\n` +
     'export default pi => lcu(pi, {command: config.projects?.[realpathSync(process.cwd())] ?? config.user});\n';
