@@ -444,6 +444,16 @@ EXPECTED_ADDITIONS = (
 )
 
 
+# Data the port changed on purpose: a difference whose path ends in the first item and whose NEW value equals
+# the OLD value with the second applied is not a difference. Anything else under the path still shows.
+EXPECTED_CHANGES = (
+    # The Pi wrapper imports the adapter by plain path on POSIX so Pi-Bolt's compiler can compile it in
+    # (Windows keeps the file:// URL; pull/65).
+    ('/.local/share/lcu/pi/extension.mjs/code',
+     lambda old: old.replace('importlcufrom"file://', 'importlcufrom"', 1) if isinstance(old, str) else old),
+)
+
+
 # Harnesses NEW supports and an older OLD does not: when OLD's setup data never mentions one, NEW's registration
 # of it is not a difference. Only its own install command (`dsh plugin --profile P add DIR` for a DIR under its
 # bundle root) and the files under that root are set aside; anything else still shows.
@@ -515,7 +525,8 @@ def diff(old, new, path='', out=None):
     elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
         for index, (a, b) in enumerate(zip(old, new)):
             diff(a, b, f'{path}[{index}]', out)
-    elif old != new:
+    elif old != new and not any(path.endswith(suffix) and change(old) == new
+                                for suffix, change in EXPECTED_CHANGES):
         out.append(f'{path}: OLD = {short(old)} | NEW = {short(new)}')
     return out
 
